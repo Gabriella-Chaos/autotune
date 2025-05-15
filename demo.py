@@ -54,7 +54,7 @@ def main():
 	print(autotuner.best())
 	print("====" * 5)
 
-	updatedparameters = {
+	updated_parameters = {
 		'x': ('numerical', scipy.stats.norm(loc=0., scale=0.1).rvs),
 		'y': (False, scipy.stats.uniform(loc=-0.1, scale=0.2).rvs),  # for demo, we can also use False for 'numerical' type
 		'a': (True, scipy.stats.bernoulli(p=0.5).rvs), # for demo, we can also use True for 'categorical' type
@@ -62,7 +62,7 @@ def main():
 		'c': ('numerical', scipy.stats.poisson(mu=0.1).rvs)
 	}
 
-	autotuner = hypertrain(parameters, calculate_metric, steps=50, autotuner=autotuner, parallel=8)
+	autotuner = hypertrain(updated_parameters, calculate_metric, steps=50, autotuner=autotuner, parallel=8)
 
 	print("Done!          ")
 

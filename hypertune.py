@@ -24,6 +24,7 @@ class AutoTuner():
         parameters (dict[str, tuple[bool | str, Callable]]): The parameter space, a mapping from parameter names to a tuple of two elements - their categiorical flag and sampling distribution. Note the sampling distribution could either be a scipy distribution or a function to sample from, i.e. ``some_sampler(size) -> np.array(size=size)``
         lam (float): the top quantile to focus on, 0 to 1. default is 0.25
         nu (float): defines "focus" - choose the top lam quantile with probability nu. 0 to 1, defualt is 0.8
+        cap (int): will cap the number of top quantile to this value, default is 10
         descend (bool): task type, whether optimize for minimum or maximum, True for loss, False for score. default is True.
         sampling_ratio (int): sample ``n`` parameter sets from ``sampling_ratio * n`` prior samples. default is num_numeric_params ^ 2 * 2 ^ num_categoric_params
         warmup_samples (int): create ``sampling_ratio * warmup_samples`` placeholder paramset in the initial metic landscape. will be gradually removed as the autotuner updates., default is 10
@@ -35,10 +36,11 @@ class AutoTuner():
 
     """
 
-    def __init__(self, parameters: dict[str, tuple[bool | str, Callable]], lam: float = 0.25, nu: float = 0.9, descend: bool = True, sampling_ratio: int = -1, warmup_samples: int = 10):
+    def __init__(self, parameters: dict[str, tuple[bool | str, Callable]], lam: float = 0.25, nu: float = 0.9, cap: int = 10, descend: bool = True, sampling_ratio: int = -1, warmup_samples: int = 10):
         self.parameters = deepcopy(parameters)
         self.lam = lam
         self.nu = nu
+        self.cap = cap
         self.descend = descend
         self.sampling_ratio = sampling_ratio
         self.warmup_samples = warmup_samples
@@ -123,7 +125,7 @@ class AutoTuner():
         elif type(paramsets) is dict:
             self.remove_dummy_around(paramsets)
 
-        nfocus = int(len(self.metrics) * self.lam)
+        nfocus = min(int(len(self.metrics) * self.lam), self.cap)
 
         if self.descend:
             self.metric_bound = np.partition(self.metrics, nfocus)[nfocus]
