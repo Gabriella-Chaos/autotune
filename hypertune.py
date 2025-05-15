@@ -1,11 +1,14 @@
+from collections.abc import Callable
 from copy import deepcopy
+import json
+from multiprocessing import Process, Pipe, connection
 import numbers
+import time
 from typing import Any
 
 import numpy as np
 import pandas as pd
 import scipy
-from scipy.stats._distn_infrastructure import rv_frozen
 
 import catboost as cb
 
@@ -18,16 +21,21 @@ class AutoTuner():
 
     Args:
 
-        parameters (dict[str, tuple(bool | str, rv_frozen | Callable)]): The parameter space, a mapping from parameter names to a tuple of two elements - their categiorical flag and sampling distribution. Note the sampling distribution could either be a scipy distribution or a function to sample from, i.e. ``some_sampler(size) -> np.array(size=size)``
+        parameters (dict[str, tuple[bool | str, Callable]]): The parameter space, a mapping from parameter names to a tuple of two elements - their categiorical flag and sampling distribution. Note the sampling distribution could either be a scipy distribution or a function to sample from, i.e. ``some_sampler(size) -> np.array(size=size)``
         lam (float): the top quantile to focus on, 0 to 1. default is 0.25
         nu (float): defines "focus" - choose the top lam quantile with probability nu. 0 to 1, defualt is 0.8
         descend (bool): task type, whether optimize for minimum or maximum, True for loss, False for score. default is True.
         sampling_ratio (int): sample ``n`` parameter sets from ``sampling_ratio * n`` prior samples. default is num_numeric_params ^ 2 * 2 ^ num_categoric_params
         warmup_samples (int): create ``sampling_ratio * warmup_samples`` placeholder paramset in the initial metic landscape. will be gradually removed as the autotuner updates., default is 10
 
+    Note:
+
+        parameters - param name => (is_categorical, sampler function)
+        is_categorical - either bool or str (``categorical`` or ``numerical``)
+
     """
 
-    def __init__(self, parameters: dict, lam: float = 0.25, nu: float = 0.9, descend: bool = True, sampling_ratio: int = -1, warmup_samples: int = 10):
+    def __init__(self, parameters: dict[str, tuple[bool | str, Callable]], lam: float = 0.25, nu: float = 0.9, descend: bool = True, sampling_ratio: int = -1, warmup_samples: int = 10):
         self.parameters = deepcopy(parameters)
         self.lam = lam
         self.nu = nu
@@ -195,6 +203,18 @@ class AutoTuner():
         idx = np.random.choice(X.index, size=n, replace=False, p=p)
         return X.loc[idx].to_dict(orient='records')
 
+    def update_space(self, parameters):
+        """
+        update the parameter space
+
+        Note:
+
+            the parameters' name and type should be the same as initialized, samplers may change
+        """
+        self.parameters = {p: parameters[p] for p in self.params}
+
+        return self
+
     def records(self) -> tuple[list[dict], list[float]]:
         """
         return all paramsets and metrics previous updated.
@@ -225,3 +245,100 @@ class AutoTuner():
         bestparamset = {p: self.paramsets[p][bestidx] for p in self.params}
 
         return bestparamset, bestmetric
+
+
+def hypertrain(parameters: dict[str, tuple], train: Callable[[dict[str, tuple],], (dict, float)], steps: int, autotuner: AutoTuner = None, parallel: int = 1, verbose: bool = True, **kwargs):
+    r"""
+    hyper-parameter optimization
+
+    Args:
+
+        parameters (dict[str, tuple]): parameter space
+        train (Callable[[dict[str, tuple],], (dict, float)]): the train function, takes paramset and output the evaluated metric from/to the Pipe
+        steps (int): steps to optimize
+        descend (bool): whether to descend to metric, default is True
+        autotuner (Optional[AutoTuner]): continue with this instance if provided, parameter space will be updated. default is None
+        parallel (int): number of parallel training processes to run, parallel << steps, clips to $\sqrt{\text{steps}}$, default is 1
+        verbose (bool): whether to print info. default is True
+
+    Returns:
+
+        result (AutoTuner)
+
+    """
+
+    remaining_steps = steps
+
+    parallel = min(parallel, int(np.ceil(np.sqrt(steps))))
+
+    process_pool = [None for i in range(parallel)]
+    pipe_pool = [Pipe() for i in range(parallel)]
+
+    autotuner = autotuner.update_space(parameters) if autotuner is not None else AutoTuner(parameters, **kwargs)
+    paramsets = autotuner.sample(n=parallel)
+
+    for i in range(parallel):
+        pipe_pool[i][0].send(paramsets[i])
+        process_pool[i] = Process(target=train_wrapper, args=(train, pipe_pool[i][1]), daemon=False)
+        process_pool[i].start()
+
+    remaining_steps -= parallel
+
+    if verbose:
+        print(f"started {parallel} training routines, remaining {remaining_steps}")
+
+    while True:
+
+        # # Grouped poll is not needed for now
+        # finished_tasks = connection.wait([p[0] for p in pipe_pool], timeout=1.)
+        #
+        # for task in finished_tasks:
+        #     pset, metic = task.recv()
+        #
+        #     if verbose:
+        #         print("Training done with parameters:")
+        #         print(json.dumps(pset, sort_keys=True, indent=2))
+        #         print("Metric evaluated - ", metric)
+        #         print()
+
+        time.sleep(1)  # avoid busy waiting, 1 sec is usually relatively short compare to training time
+
+        for i in range(parallel):
+            if not ((process_pool[i] is None) or process_pool[i].is_alive()):
+                process_pool[i] = None
+
+                if pipe_pool[i][0].poll():
+                    paramset, metric = pipe_pool[i][0].recv()
+                    autotuner.update(paramset, metric)
+                
+                    if verbose:
+                        print("Training done with parameters:")
+                        print(json.dumps(paramset, sort_keys=True, indent=2))
+                        print("Metric evaluated - ", metric)
+                        print()
+                else:
+                    # training process did not terminate normally
+                    print("One failed training observed.")  # TODO: shall we maintain a list of training paramsets so that we could refer to it when failed, for reproducibility perhaps?
+
+                if remaining_steps > 0:
+                    paramset = autotuner.sample(n=1)[0]
+                    pipe_pool[i][0].send(paramset)
+                    process_pool[i] = Process(target=train_wrapper(train, pipe_pool[i][1]), daemon=False)
+                    process_pool[i].start()
+                    remaining_steps -= 1
+
+        if all([p is None for p in process_pool]):
+            break
+
+    return autotuner
+
+
+def train_wrapper(train: Callable[[dict[str, tuple],], (dict, float)], pipe: connection.Connection):
+    r"""
+    wrapper for train function to receive/output data from/to the pipe
+    """
+
+    pset = pipe.recv()
+    pipe.send(train(pset))
+
+    return
