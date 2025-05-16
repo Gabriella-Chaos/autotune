@@ -12,6 +12,8 @@ import scipy
 
 import catboost as cb
 
+from hypertune import AutoTuner, hypertrain
+
 
 class AutoTuner():
 
@@ -88,7 +90,7 @@ class AutoTuner():
 
             if self.dummy_df is not None:
                 X = pd.concat([X, self.dummy_df], ignore_index=True)
-                Y = np.concatenate([Y, np.full(len(self.dummy_df.index), min(self.metrics) if self.descend else max(self.metrics)) + np.random.normal(scale=(Y.ptp() + 1.) / 2, size=len(self.dummy_df.index))])
+                Y = np.concatenate([Y, np.full(len(self.dummy_df.index), min(self.metrics) if self.descend else max(self.metrics)) + np.random.normal(scale=(np.ptp(Y) + 1.) / 2, size=len(self.dummy_df.index))])
 
         self.surrogate.fit(X, Y, cat_features=self.catidx, silent=True)
 
@@ -249,7 +251,7 @@ class AutoTuner():
         return bestparamset, bestmetric
 
 
-def hypertrain(parameters: dict[str, tuple], train: Callable[[dict[str, tuple],], (dict, float)], steps: int, autotuner: AutoTuner = None, parallel: int = 1, verbose: bool = True, **kwargs):
+def hypertrain(parameters: dict[str, tuple], train: Callable[[dict[str, tuple],], float], steps: int, autotuner: AutoTuner = None, parallel: int = 1, verbose: bool = True, **kwargs):
     r"""
     hyper-parameter optimization
 
@@ -335,12 +337,12 @@ def hypertrain(parameters: dict[str, tuple], train: Callable[[dict[str, tuple],]
     return autotuner
 
 
-def train_wrapper(train: Callable[[dict[str, tuple],], (dict, float)], pipe: connection.Connection):
+def train_wrapper(train: Callable[[dict[str, tuple],], float], pipe: connection.Connection):
     r"""
     wrapper for train function to receive/output data from/to the pipe
     """
 
     pset = pipe.recv()
-    pipe.send(train(pset))
+    pipe.send((pset, train(pset)))
 
     return
