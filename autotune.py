@@ -328,6 +328,7 @@ def hypertrain(parameters: dict[str, tuple], train: Callable[[dict[str, tuple],]
                     process_pool[i] = Process(target=train_wrapper(train, pipe_pool[i][1]), daemon=False)
                     process_pool[i].start()
                     remaining_steps -= 1
+                    print(f"started {1} training routines, remaining {remaining_steps}", flush=True)
 
         if all([p is None for p in process_pool]):
             break
