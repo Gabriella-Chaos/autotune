@@ -6,7 +6,7 @@ import pandas as pd
 import scipy
 import matplotlib.pyplot as plt
 
-from hypertune import AutoTuner, hypertrain
+from autotune import AutoTuner, hypertrain
 
 
 def get_catb(size=1):
@@ -17,7 +17,6 @@ def calculate_metric(data):
 	"""
 	Demo target function to optimize, should obtain minimun at (x=0, y=0, a=1, b='b2', c=0)
 	"""
-
 	time.sleep(np.random.randint(low=0, high=5))
 	return data, np.exp(np.abs(data['x'] * data['y'])) + np.abs(data['x'] + data['y']) + np.abs(data['x'] - data['y']) + data['a'] * (1. if data['b'] == 'b1' else -1) + data['c']
 

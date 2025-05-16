@@ -306,29 +306,34 @@ def hypertrain(parameters: dict[str, tuple], train: Callable[[dict[str, tuple],]
         time.sleep(1)  # avoid busy waiting, 1 sec is usually relatively short compare to training time
 
         for i in range(parallel):
-            if not ((process_pool[i] is None) or process_pool[i].is_alive()):
-                process_pool[i] = None
 
-                if pipe_pool[i][0].poll():
-                    paramset, metric = pipe_pool[i][0].recv()
-                    autotuner.update(paramset, metric)
-                
-                    if verbose:
-                        print("Training done with parameters:", flush=True)
-                        print(json.dumps(paramset, sort_keys=True, indent=2), flush=True)
-                        print("Metric evaluated - ", metric, flush=True)
-                        print(flush=True)
-                else:
-                    # training process did not terminate normally
-                    print("One failed training observed.", flush=True)  # TODO: shall we maintain a list of training paramsets so that we could refer to it when failed, for reproducibility perhaps?
+            if process_pool[i] is not None:
+                if not process_pool[i].is_alive():
+                    process_pool[i].join()
+                    process_pool[i] = None
 
-                if remaining_steps > 0:
-                    paramset = autotuner.sample(n=1)[0]
-                    pipe_pool[i][0].send(paramset)
-                    process_pool[i] = Process(target=train_wrapper(train, pipe_pool[i][1]), daemon=False)
-                    process_pool[i].start()
-                    remaining_steps -= 1
-                    print(f"started {1} training routines, remaining {remaining_steps}", flush=True)
+                    if pipe_pool[i][0].poll():
+                        paramset, metric = pipe_pool[i][0].recv()
+                        autotuner.update(paramset, metric)
+                    
+                        if verbose:
+                            print("Training done with parameters:", flush=True)
+                            print(json.dumps(paramset, sort_keys=True, indent=2), flush=True)
+                            print("Metric evaluated - ", metric, flush=True)
+                            print(flush=True)
+                    else:
+                        # training process did not terminate normally
+                        if verbose:
+                            print("One failed training observed.", flush=True)  # TODO: shall we maintain a list of training paramsets so that we could refer to it when failed, for reproducibility perhaps?
+
+                    if remaining_steps > 0:
+                        paramset = autotuner.sample(n=1)[0]
+                        pipe_pool[i][0].send(paramset)
+                        process_pool[i] = Process(target=train_wrapper, args=(train, pipe_pool[i][1]), daemon=False)
+                        process_pool[i].start()
+                        remaining_steps -= 1
+                        if verbose:
+                            print(f"started {1} training routines, remaining {remaining_steps}", flush=True)
 
         if all([p is None for p in process_pool]):
             break
