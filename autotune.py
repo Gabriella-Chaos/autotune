@@ -12,8 +12,6 @@ import scipy
 
 import catboost as cb
 
-from hypertune import AutoTuner, hypertrain
-
 
 class AutoTuner():
 
@@ -251,7 +249,7 @@ class AutoTuner():
         return bestparamset, bestmetric
 
 
-def hypertrain(parameters: dict[str, tuple], train: Callable[[dict[str, tuple],], float], steps: int, autotuner: AutoTuner = None, parallel: int = 1, verbose: bool = True, **kwargs):
+def hypertrain(parameters: dict[str, tuple], train: Callable[[dict[str, tuple],], (dict, float)], steps: int, autotuner: AutoTuner = None, parallel: int = 1, verbose: bool = True, **kwargs):
     r"""
     hyper-parameter optimization
 
@@ -289,7 +287,7 @@ def hypertrain(parameters: dict[str, tuple], train: Callable[[dict[str, tuple],]
     remaining_steps -= parallel
 
     if verbose:
-        print(f"started {parallel} training routines, remaining {remaining_steps}")
+        print(f"started {parallel} training routines, remaining {remaining_steps}", flush=True)
 
     while True:
 
@@ -300,10 +298,10 @@ def hypertrain(parameters: dict[str, tuple], train: Callable[[dict[str, tuple],]
         #     pset, metic = task.recv()
         #
         #     if verbose:
-        #         print("Training done with parameters:")
-        #         print(json.dumps(pset, sort_keys=True, indent=2))
-        #         print("Metric evaluated - ", metric)
-        #         print()
+        #         print("Training done with parameters:", flush=True)
+        #         print(json.dumps(pset, sort_keys=True, indent=2), flush=True)
+        #         print("Metric evaluated - ", metric, flush=True)
+        #         print(flush=True)
 
         time.sleep(1)  # avoid busy waiting, 1 sec is usually relatively short compare to training time
 
@@ -316,13 +314,13 @@ def hypertrain(parameters: dict[str, tuple], train: Callable[[dict[str, tuple],]
                     autotuner.update(paramset, metric)
                 
                     if verbose:
-                        print("Training done with parameters:")
-                        print(json.dumps(paramset, sort_keys=True, indent=2))
-                        print("Metric evaluated - ", metric)
-                        print()
+                        print("Training done with parameters:", flush=True)
+                        print(json.dumps(paramset, sort_keys=True, indent=2), flush=True)
+                        print("Metric evaluated - ", metric, flush=True)
+                        print(flush=True)
                 else:
                     # training process did not terminate normally
-                    print("One failed training observed.")  # TODO: shall we maintain a list of training paramsets so that we could refer to it when failed, for reproducibility perhaps?
+                    print("One failed training observed.", flush=True)  # TODO: shall we maintain a list of training paramsets so that we could refer to it when failed, for reproducibility perhaps?
 
                 if remaining_steps > 0:
                     paramset = autotuner.sample(n=1)[0]
@@ -337,7 +335,7 @@ def hypertrain(parameters: dict[str, tuple], train: Callable[[dict[str, tuple],]
     return autotuner
 
 
-def train_wrapper(train: Callable[[dict[str, tuple],], float], pipe: connection.Connection):
+def train_wrapper(train: Callable[[dict[str, tuple],], (dict, float)], pipe: connection.Connection):
     r"""
     wrapper for train function to receive/output data from/to the pipe
     """
